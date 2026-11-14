@@ -26,6 +26,8 @@ type Client struct {
 type Summary struct {
 	Users        int
 	Pages        int
+	Skipped      int
+	Failed       int
 	Blocks       int
 	Comments     int
 	Databases    int
@@ -210,6 +212,30 @@ type ingestPageOptions struct {
 	CollectionID  string
 	FetchBlocks   bool
 	FetchComments bool
+}
+
+// pageContentCurrent reports whether a discovered page can be skipped this
+// run: the local mirror already holds this exact revision (same
+// last_edited_time) and the previous block walk finished cleanly. Anything
+// else — a newer timestamp, a page the API source never synced, an archived
+// or restored page, or a missing/interrupted completion marker — must be
+// re-fetched; a matching timestamp alone never proves the content is intact.
+func pageContentCurrent(ctx context.Context, st *store.Store, page obj) (bool, error) {
+	if page.bool("archived") || page.bool("in_trash") {
+		return false, nil
+	}
+	stored, ok, err := st.PageForSource(ctx, page.string("id"), SourceName)
+	if err != nil || !ok {
+		return false, err
+	}
+	if !stored.Alive || stored.LastEditedTime != parseTimeMS(page.string("last_edited_time")) {
+		return false, nil
+	}
+	cursor, ok, err := st.SyncStateCursor(ctx, SourceName, "page_blocks", page.string("id"))
+	if err != nil {
+		return false, err
+	}
+	return ok && cursor == "complete", nil
 }
 
 func (c Client) ingestPage(ctx context.Context, st *store.Store, page obj, opts ingestPageOptions) (blockCount int, commentCount int, warnings []string, err error) {

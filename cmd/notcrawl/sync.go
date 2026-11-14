@@ -97,11 +97,11 @@ func runSync(ctx context.Context, stdout, stderr io.Writer, cfg config.Config, a
 			}
 			completed++
 			tracker.Set(completed, "phase", "api", "pages", s.Pages, "databases", s.Databases, "blocks", s.Blocks)
-			trace.done("users", s.Users, "pages", s.Pages, "databases", s.Databases, "database_rows", s.DatabaseRows, "blocks", s.Blocks, "comments", s.Comments, "warnings", len(s.Warnings))
+			trace.done("users", s.Users, "pages", s.Pages, "skipped", s.Skipped, "failed", s.Failed, "databases", s.Databases, "database_rows", s.DatabaseRows, "blocks", s.Blocks, "comments", s.Comments, "warnings", len(s.Warnings))
 			if !*verbose {
 				writeSyncWarnings(stderr, s.Warnings)
 			}
-			fmt.Fprintf(stdout, "api: users=%d pages=%d databases=%d database_rows=%d blocks=%d comments=%d\n", s.Users, s.Pages, s.Databases, s.DatabaseRows, s.Blocks, s.Comments)
+			fmt.Fprintf(stdout, "api: users=%d pages=%d skipped=%d failed=%d databases=%d database_rows=%d blocks=%d comments=%d\n", s.Users, s.Pages, s.Skipped, s.Failed, s.Databases, s.DatabaseRows, s.Blocks, s.Comments)
 		case "notion-mcp":
 			trace.start("notion-mcp")
 			s, err := syncNotionMCP(ctx, st, cfg, notionmcp.SyncOptions{PageIDs: pageIDs, Queries: queries, Limit: *limit})
