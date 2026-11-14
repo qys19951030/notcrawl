@@ -208,12 +208,25 @@ func TestSyncPreservesOmittedPagesWithoutCompleteDiscovery(t *testing.T) {
 				ctx = cancelled
 			}
 			summary, err := client.Sync(ctx, st)
-			if failure == "empty" || failure == "empty-collections" || failure == "partial-blocks" {
+			switch failure {
+			case "empty", "empty-collections", "partial-blocks":
 				if err != nil || len(summary.Warnings) == 0 {
 					t.Fatalf("wanted incomplete discovery warning: %+v, %v", summary, err)
 				}
-			} else if err == nil {
-				t.Fatal("wanted discovery failure")
+			case "/blocks/first/children", "pagination-/blocks/first/children", "/comments":
+				// Page-level failures are isolated: the run completes, the
+				// page is counted failed, and omission reconciliation stays
+				// disabled for the run.
+				if err != nil {
+					t.Fatalf("page failure must not abort the sync: %v", err)
+				}
+				if summary.Failed != 1 {
+					t.Fatalf("failed page count = %d, want 1", summary.Failed)
+				}
+			default:
+				if err == nil {
+					t.Fatal("wanted discovery failure")
+				}
 			}
 			assertDiscoveryPage(t, st, "omitted", true)
 		})

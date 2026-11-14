@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/openclaw/notcrawl/internal/store"
@@ -30,10 +29,19 @@ func TestAPIFailureKeepsCommittedSearchConsistent(t *testing.T) {
 				case "/users":
 					_ = json.NewEncoder(w).Encode(obj{"results": []any{}, "has_more": false})
 				case "/search":
-					_ = json.NewEncoder(w).Encode(obj{"results": []any{
-						obj{"id": "first", "archived": retired, "properties": obj{"title": obj{"type": "title", "title": []any{obj{"plain_text": "currentword"}}}}},
-						obj{"id": "second"},
-					}, "has_more": false})
+					var body obj
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						http.Error(w, "invalid request", http.StatusBadRequest)
+						return
+					}
+					results := []any{}
+					if body.mapObj("filter").string("value") == "page" {
+						results = []any{
+							obj{"id": "first", "archived": retired, "properties": obj{"title": obj{"type": "title", "title": []any{obj{"plain_text": "currentword"}}}}},
+							obj{"id": "second"},
+						}
+					}
+					_ = json.NewEncoder(w).Encode(obj{"results": results, "has_more": false})
 				case "/blocks/second/children":
 					http.Error(w, "synthetic upstream failure", http.StatusTeapot)
 				case "/blocks/first/children", "/comments":
@@ -44,9 +52,12 @@ func TestAPIFailureKeepsCommittedSearchConsistent(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			_, err = (Client{BaseURL: server.URL, Token: "test", HTTP: server.Client()}).Sync(ctx, st)
-			if err == nil || !strings.Contains(err.Error(), "418") {
-				t.Fatalf("lost upstream error: %v", err)
+			summary, err := (Client{BaseURL: server.URL, Token: "test", HTTP: server.Client()}).Sync(ctx, st)
+			if err != nil {
+				t.Fatalf("page failure must be isolated, not abort the sync: %v", err)
+			}
+			if summary.Failed != 1 {
+				t.Fatalf("failed page count = %d, want 1", summary.Failed)
 			}
 			old, err := st.Search(ctx, "obsoleteword", 10)
 			if err != nil || len(old) != 0 {

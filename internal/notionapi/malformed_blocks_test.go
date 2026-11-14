@@ -55,8 +55,12 @@ func TestMalformedBlockListingPreservesArchive(t *testing.T) {
 				}))
 				t.Cleanup(server.Close)
 				client.BaseURL, client.HTTP = server.URL, server.Client()
-				if _, err := client.Sync(ctx, st); err == nil {
-					t.Error("malformed block listing reported success")
+				summary, err := client.Sync(ctx, st)
+				if err != nil {
+					t.Fatalf("malformed block listing must fail the page, not the sync: %v", err)
+				}
+				if summary.Failed != 1 {
+					t.Errorf("malformed block listing counted %d failed pages, want 1", summary.Failed)
 				}
 				var partial int
 				if err := st.DB().QueryRow("select count(*) from blocks where id = 'partial'").Scan(&partial); err != nil || partial != 0 {
@@ -178,8 +182,12 @@ func TestIncompleteBlockPreservesArchive(t *testing.T) {
 				}
 				incomplete = true
 				fixture.pages = []string{"first"}
-				if _, err := client.Sync(ctx, st); err == nil {
-					t.Error("incomplete block reported success")
+				summary, err := client.Sync(ctx, st)
+				if err != nil {
+					t.Fatalf("incomplete block must fail the page, not the sync: %v", err)
+				}
+				if summary.Failed != 1 {
+					t.Errorf("incomplete block counted %d failed pages, want 1", summary.Failed)
 				}
 				if !incompleteServed {
 					t.Fatal("did not reach incomplete block")

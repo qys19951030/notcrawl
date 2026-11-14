@@ -130,7 +130,16 @@ func TestBlockPaginationFailurePreservesArchive(t *testing.T) {
 		case "/users":
 			fmt.Fprint(w, `{"results":[]}`)
 		case "/search":
-			fmt.Fprint(w, `{"results":[{"id":"page","properties":{}}],"has_more":false}`)
+			var body obj
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "invalid request", http.StatusBadRequest)
+				return
+			}
+			if body.mapObj("filter").string("value") == "page" {
+				fmt.Fprint(w, `{"results":[{"id":"page","properties":{}}],"has_more":false}`)
+			} else {
+				fmt.Fprint(w, `{"results":[],"has_more":false}`)
+			}
 		case "/blocks/page/children":
 			if calls.Add(1) > 2 {
 				http.Error(w, "pagination did not stop", http.StatusInternalServerError)
@@ -142,12 +151,12 @@ func TestBlockPaginationFailurePreservesArchive(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	_, err = (Client{BaseURL: server.URL, Token: "test-token", HTTP: server.Client()}).Sync(ctx, st)
-	if err == nil || !strings.Contains(err.Error(), "repeated cursor") || calls.Load() != 2 {
-		t.Fatalf("sync error = %v; requests = %d", err, calls.Load())
+	summary, err := (Client{BaseURL: server.URL, Token: "test-token", HTTP: server.Client()}).Sync(ctx, st)
+	if err != nil {
+		t.Fatalf("page pagination failure must be isolated, not abort the sync: %v", err)
 	}
-	if strings.Contains(err.Error(), "private-cursor-marker") {
-		t.Fatal("pagination error exposes an opaque cursor")
+	if summary.Failed != 1 || calls.Load() != 2 {
+		t.Fatalf("failed pages = %d; requests = %d, want 1 and 2", summary.Failed, calls.Load())
 	}
 	var alive int
 	if err := st.DB().QueryRowContext(ctx, `select alive from blocks where id = 'existing'`).Scan(&alive); err != nil || alive != 1 {

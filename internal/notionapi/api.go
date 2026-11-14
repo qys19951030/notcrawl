@@ -76,21 +76,40 @@ func (c Client) Sync(ctx context.Context, st *store.Store) (Summary, error) {
 		return s, err
 	}
 	for _, page := range pages {
-		count, comments, warnings, err := c.ingestPage(ctx, st, page, ingestPageOptions{FetchBlocks: true, FetchComments: true})
+		// Every discovered page stays in seenPages — skipped pages included —
+		// so omission reconciliation never retires a page just because this
+		// run did not re-fetch its content.
+		s.Pages++
+		seenPages[page.string("id")] = true
+		current, err := pageContentCurrent(ctx, st, page)
 		if err != nil {
 			return s, err
 		}
-		s.Pages++
-		seenPages[page.string("id")] = true
+		if current {
+			s.Skipped++
+			c.tracePhase("pages", "progress", started, "pages", s.Pages, "skipped", s.Skipped, "failed", s.Failed, "blocks", s.Blocks, "comments", s.Comments)
+			continue
+		}
+		count, comments, warnings, err := c.ingestPage(ctx, st, page, ingestPageOptions{FetchBlocks: true, FetchComments: true})
+		if err != nil {
+			// Page-level isolation: one failing page must not abort the run.
+			// The page keeps no page_blocks completion marker, so the next
+			// run re-fetches it, and the failure disables omission
+			// reconciliation for this run.
+			s.Failed++
+			complete = false
+			c.tracePhase("pages", "progress", started, "pages", s.Pages, "skipped", s.Skipped, "failed", s.Failed, "blocks", s.Blocks, "comments", s.Comments)
+			continue
+		}
 		if len(warnings) > 0 {
 			complete = false
 		}
 		s.Blocks += count
 		s.Comments += comments
 		s.Warnings = append(s.Warnings, warnings...)
-		c.tracePhase("pages", "progress", started, "pages", s.Pages, "blocks", s.Blocks, "comments", s.Comments)
+		c.tracePhase("pages", "progress", started, "pages", s.Pages, "skipped", s.Skipped, "failed", s.Failed, "blocks", s.Blocks, "comments", s.Comments)
 	}
-	c.tracePhase("pages", "finished", started, "pages", s.Pages, "blocks", s.Blocks, "comments", s.Comments)
+	c.tracePhase("pages", "finished", started, "pages", s.Pages, "skipped", s.Skipped, "failed", s.Failed, "blocks", s.Blocks, "comments", s.Comments)
 	started = time.Now()
 	c.tracePhase("collections", "started", started)
 	collections, err := c.searchCollections(ctx)
@@ -122,13 +141,16 @@ func (c Client) Sync(ctx context.Context, st *store.Store) (Summary, error) {
 		complete = false
 		s.Warnings = append(s.Warnings, "Notion API discovery returned databases but no pages or rows; keeping existing API pages.")
 	}
-	// Only a full, nonempty discovery can retire omitted pages. Keep the
-	// source tombstones, fallback content, and search projections atomic.
+	// Only a full, nonempty discovery can retire omitted pages, and only a
+	// run without failures or partial walks marks the workspace sync
+	// complete. Keep the source tombstones, fallback content, and search
+	// projections atomic.
 	if err := writePageBatch(ctx, st, func() error {
-		if complete {
-			if err := st.RetireSourcePagesNotSeen(ctx, SourceName, seenPages); err != nil {
-				return err
-			}
+		if !complete {
+			return nil
+		}
+		if err := st.RetireSourcePagesNotSeen(ctx, SourceName, seenPages); err != nil {
+			return err
 		}
 		return st.SetSyncState(ctx, SourceName, "workspace", "default", time.Now().Format(time.RFC3339))
 	}); err != nil {
@@ -228,7 +250,8 @@ func pageContentCurrent(ctx context.Context, st *store.Store, page obj) (bool, e
 	if err != nil || !ok {
 		return false, err
 	}
-	if !stored.Alive || stored.LastEditedTime != parseTimeMS(page.string("last_edited_time")) {
+	edited := parseTimeMS(page.string("last_edited_time"))
+	if edited == 0 || !stored.Alive || stored.LastEditedTime != edited {
 		return false, nil
 	}
 	cursor, ok, err := st.SyncStateCursor(ctx, SourceName, "page_blocks", page.string("id"))
