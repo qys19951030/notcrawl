@@ -66,7 +66,7 @@ func TestSyncVerboseAPITraceAndRedaction(t *testing.T) {
 		t.Fatalf("verbose changed stdout: %q != %q", verboseOut.String(), normalOut.String())
 	}
 	logs := verboseErr.String()
-	for _, want := range []string{`msg="sync trace"`, `phase=api`, `phase=users`, `phase=pages`, `phase=collections`, `state=started`, `state=finished`, `elapsed=`, `attempt=1`, `attempt=2`, `state=retry`, `status=429`, `status=200`, `status=403`, `retry_after=1ms`, `users=1`, `pages=1`, `blocks=1`, `warnings=1`} {
+	for _, want := range []string{`msg="sync trace"`, `phase=api`, `phase=users`, `phase=pages`, `phase=collections`, `state=started`, `state=finished`, `elapsed=`, `attempt=1`, `attempt=2`, `state=retry`, `status=429`, `status=200`, `status=403`, `retry_after=1ms`, `users=1`, `pages=1`, `skipped=0`, `failed=0`, `blocks=1`, `warnings=1`} {
 		if !strings.Contains(logs, want) {
 			t.Errorf("missing %q in trace:\n%s", want, logs)
 		}
